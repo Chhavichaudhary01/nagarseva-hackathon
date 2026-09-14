@@ -20,7 +20,68 @@ public class NagarSevaApplication {
 
     public static void main(String[] args) {
         loadDotEnvIfPresent();
+        normalizeDatabaseUrl();
         SpringApplication.run(NagarSevaApplication.class, args);
+    }
+
+    private static void normalizeDatabaseUrl() {
+        String rawUrl = System.getenv("DATABASE_URL");
+        if (rawUrl == null || rawUrl.isBlank()) {
+            rawUrl = System.getProperty("DATABASE_URL");
+        }
+        if (rawUrl == null || rawUrl.isBlank() || rawUrl.startsWith("jdbc:h2:")) {
+            return;
+        }
+
+        try {
+            if (rawUrl.startsWith("postgres://") || rawUrl.startsWith("postgresql://")) {
+                String normalizedUriStr = rawUrl.startsWith("postgres://")
+                        ? "postgresql://" + rawUrl.substring("postgres://".length())
+                        : rawUrl;
+
+                java.net.URI uri = new java.net.URI(normalizedUriStr);
+                String host = uri.getHost();
+                int port = uri.getPort() > 0 ? uri.getPort() : 5432;
+                String path = uri.getPath();
+                String userInfo = uri.getUserInfo();
+                String query = uri.getQuery();
+
+                StringBuilder jdbcUrl = new StringBuilder("jdbc:postgresql://")
+                        .append(host)
+                        .append(":")
+                        .append(port)
+                        .append(path);
+
+                if (query != null && !query.isBlank()) {
+                    jdbcUrl.append("?").append(query);
+                } else if (host != null && (host.contains("render.com") || host.contains("neon.tech") || host.contains("supabase.co") || host.contains("railway.app"))) {
+                    jdbcUrl.append("?sslmode=require");
+                }
+
+                String finalJdbc = jdbcUrl.toString();
+                System.setProperty("spring.datasource.url", finalJdbc);
+                System.setProperty("DATABASE_URL", finalJdbc);
+                System.setProperty("spring.datasource.driver-class-name", "org.postgresql.Driver");
+
+                if (userInfo != null && userInfo.contains(":")) {
+                    String[] parts = userInfo.split(":", 2);
+                    System.setProperty("spring.datasource.username", parts[0]);
+                    System.setProperty("spring.datasource.password", parts[1]);
+                }
+                log.info("Converted cloud DATABASE_URL to JDBC format for host '{}'", host);
+            } else if (rawUrl.startsWith("jdbc:postgres://")) {
+                String fixed = "jdbc:postgresql://" + rawUrl.substring("jdbc:postgres://".length());
+                System.setProperty("spring.datasource.url", fixed);
+                System.setProperty("DATABASE_URL", fixed);
+                System.setProperty("spring.datasource.driver-class-name", "org.postgresql.Driver");
+            } else if (!rawUrl.startsWith("jdbc:")) {
+                String fixed = "jdbc:" + rawUrl;
+                System.setProperty("spring.datasource.url", fixed);
+                System.setProperty("DATABASE_URL", fixed);
+            }
+        } catch (Exception e) {
+            log.warn("Could not normalize cloud DATABASE_URL: {}", e.getMessage());
+        }
     }
 
     private static void loadDotEnvIfPresent() {
