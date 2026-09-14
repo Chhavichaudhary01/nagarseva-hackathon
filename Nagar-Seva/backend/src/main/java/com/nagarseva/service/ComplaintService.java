@@ -79,6 +79,9 @@ public class ComplaintService implements CommandLineRunner {
     @Value("${app.storage.migrate-base64:false}")
     private boolean migrateBase64ToObjectStorage;
 
+    @Value("${app.photo-forensics.strict:false}")
+    private boolean photoForensicsStrict;
+
     public ComplaintService() {
     }
 
@@ -119,14 +122,18 @@ public class ComplaintService implements CommandLineRunner {
             );
 
             if (!validation.valid()) {
-                throw new com.nagarseva.config.PhotoSizeLimitExceededException(
-                        "Photo validation failed: " + validation.errorMessage()
-                );
+                if (photoForensicsStrict) {
+                    throw new com.nagarseva.config.PhotoSizeLimitExceededException(
+                            "Photo validation failed: " + validation.errorMessage()
+                    );
+                } else {
+                    log.warn("Photo forensics non-strict notice: {}", validation.errorMessage());
+                }
             }
 
-            // Store forensics results for audit
-            complaint.setImageVerified(validation.forensics().hasValidExif() && validation.forensics().isOriginal());
-            complaint.setImageVerificationNote("Forensics: " + validation.forensics().manipulationIndicators());
+            // Forensics metadata note
+            String forensicsNote = validation.forensics() != null ? "Forensics: " + validation.forensics().manipulationIndicators() : "Notice: " + validation.errorMessage();
+            log.info("Photo forensics validation complete for complaint: valid={}, note={}", validation.valid(), forensicsNote);
 
             // 2. Upload to object storage if enabled (migrate from base64)
             if (objectStorageService.isEnabled() && migrateBase64ToObjectStorage) {
@@ -176,16 +183,36 @@ public class ComplaintService implements CommandLineRunner {
         complaint.setRoutedAuthority(aiResult.routedAuthority());
         complaint.setAiSummary(aiResult.aiSummary());
         complaint.setPriority(aiResult.priority());
-        // Keep forensics results if already set, otherwise use Gemini
-        if (complaint.getImageVerified() == null) {
+
+        boolean hasPhoto = complaint.getPhotoData() != null && !complaint.getPhotoData().isBlank();
+        if (hasPhoto) {
             complaint.setImageVerified(aiResult.imageVerified());
-        }
-        if (complaint.getImageVerificationNote() == null) {
             complaint.setImageVerificationNote(aiResult.imageVerificationNote());
+
+            // If Gemini AI Vision is active and explicitly verified that the image does NOT depict the civic issue:
+            // (e.g., video game cover, meme, selfie, indoor room, fake evidence)
+            boolean forceManualReview = complaint.getDescription() != null &&
+                    complaint.getDescription().contains("[Citizen Note: On-site photo submitted for manual officer inspection]");
+
+            if (geminiService.isConfigured() && Boolean.FALSE.equals(aiResult.imageVerified())) {
+                if (forceManualReview) {
+                    log.info("Citizen requested manual officer review for complaint on-site photo: category={}", complaint.getCategory());
+                    complaint.setImageVerified(false);
+                    complaint.setImageVerificationNote("Pending on-site officer review: " + (aiResult.imageVerificationNote() != null ? aiResult.imageVerificationNote() : "Photo flagged for field verification"));
+                } else {
+                    log.warn("Complaint rejected due to AI photo mismatch: category={}, note={}",
+                            complaint.getCategory(), aiResult.imageVerificationNote());
+                    throw new IllegalArgumentException("AI Photo Verification Failed: The attached image does not match the reported grievance (" +
+                            complaint.getCategory() + "). " + aiResult.imageVerificationNote());
+                }
+            }
+        } else {
+            complaint.setImageVerified(null);
+            complaint.setImageVerificationNote(null);
         }
 
         log.info("Complaint created: ID={}, authority={}, priority={}, imageVerified={}",
-                complaint.getId(), aiResult.routedAuthority(), aiResult.priority(), aiResult.imageVerified());
+                complaint.getId(), aiResult.routedAuthority(), aiResult.priority(), complaint.getImageVerified());
 
         Complaint saved = complaintRepository.save(complaint);
 

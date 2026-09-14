@@ -30,7 +30,7 @@ public class GeminiService {
     @Value("${app.gemini.api-key:}")
     private String apiKey;
 
-    @Value("${app.gemini.model:gemini-3.6-flash}")
+    @Value("${app.gemini.model:gemini-3.5-flash}")
     private String model;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -42,6 +42,18 @@ public class GeminiService {
 
     public void setApiKey(String apiKey) {
         this.apiKey = apiKey;
+    }
+
+    public void setModel(String model) {
+        this.model = model;
+    }
+
+    public String getModel() {
+        return this.model;
+    }
+
+    public boolean isConfigured() {
+        return apiKey != null && !apiKey.isBlank();
     }
 
 
@@ -56,6 +68,13 @@ public class GeminiService {
     public record ResolutionVerificationResult(
             boolean resolutionVerified,
             String resolutionVerificationNote
+    ) {}
+
+    public record PhotoVerificationResult(
+            boolean verified,
+            String detectedContent,
+            String explanation,
+            String suggestedCategory
     ) {}
 
     /**
@@ -75,32 +94,54 @@ public class GeminiService {
             ObjectNode contentObj = contentsArray.addObject();
             ArrayNode partsArray = contentObj.putArray("parts");
 
+            boolean hasPhoto = photoData != null && !photoData.isBlank();
+            String photoInstruction = hasPhoto
+                    ? """
+                      Photo Verification Rules (Citizen-Centric & Real-World Grounded):
+                      - The citizen has attached a photo as visual proof of the civic issue.
+                      - REAL-WORLD CITIZEN CONTEXT: Citizens are regular everyday residents capturing photos with basic mobile phones. Photos are frequently taken at night, dusk, or in challenging low-light conditions, from a distance, or with motion blur / camera shake.
+                      - Streetlight / Lighting: Streetlights are mounted 15-25 feet high. Photos taken from the ground or at night will naturally show dark street corridors, lamp post silhouettes, unlit bulb fixtures, utility poles, or overhead wires. DO NOT reject a streetlight photo for being dark, blurry, distant, or grainy! If the image shows an outdoor street, lamppost, utility pole, electrical wire, or dark road stretch, you MUST set "imageVerified": true.
+                      - Road Damage, Drainage, Illegal Dumping, Unsafe Area, Encroachment: Any real outdoor scene showing roads, pavement, asphalt defects, puddles, gutters, drains, trash piles, or public spaces MUST be accepted ("imageVerified": true).
+                      - BENEFIT OF THE DOUBT: If an image appears to be an authentic photo taken outdoors in a real neighborhood or public space related to the complaint, ALWAYS set "imageVerified": true.
+                      - STRICT REJECTION (ONLY FOR FAKE/UNRELATED CONTENT): ONLY set "imageVerified": false if the image is clearly and undeniably fake, synthetic, or non-civic:
+                        * Video game cover art, gameplay screenshots, video games
+                        * Internet memes, cartoons, anime, digital illustrations, computer wallpapers
+                        * Selfies or personal portraits of people posing
+                        * Indoor residential rooms (living room, bedroom, bathroom, kitchen, domestic furniture)
+                        * Digital screenshots of software dashboards, web pages, or text documents
+                        * Food plates, domestic pets/house animals
+                      """
+                    : "No photo was attached. Set \"imageVerified\": null and \"imageVerificationNote\": null.";
+
             String prompt = String.format("""
-                    You are NagarSeva AI, an intelligent civic governance assistant.
+                    You are NagarSeva AI, an intelligent civic governance and multimodal computer vision assistant.
                     Analyze the following civic complaint details submitted by a citizen:
                     Category: %s
                     Description: %s
                     Location: %s
                     Ward: %s
                     
+                    %s
+                    
                     Respond strictly in valid JSON format with NO markdown wrapping:
                     {
                       "routedAuthority": "Exact municipal department responsible (e.g., Public Works Department (PWD), Electricity Board, Jal Sansthan, Sanitation & Waste Management, Traffic Police)",
                       "aiSummary": "A concise 1-2 sentence executive summary of the issue",
                       "priority": "LOW or MEDIUM or HIGH",
-                      "imageVerified": true/false (true if photo matches the reported issue, false if photo is irrelevant/fake or if no photo provided),
-                      "imageVerificationNote": "Short explanation of image check"
+                      "imageVerified": true or false or null,
+                      "imageVerificationNote": "Detailed visual evaluation and reason for approval or rejection"
                     }
                     """,
                     complaint.getCategory(),
                     complaint.getDescription(),
                     complaint.getLocation(),
-                    complaint.getWard()
+                    complaint.getWard(),
+                    photoInstruction
             );
 
             partsArray.addObject().put("text", prompt);
 
-            if (photoData != null && !photoData.isBlank()) {
+            if (hasPhoto) {
                 attachInlineImage(partsArray, photoData);
             }
 
@@ -124,10 +165,20 @@ public class GeminiService {
                         default -> ComplaintPriority.MEDIUM;
                     };
 
-                    boolean imageVerified = json.path("imageVerified").asBoolean(photoData != null && !photoData.isBlank());
-                    String imageVerificationNote = json.path("imageVerificationNote").asText(
-                            imageVerified ? "Verified: Image matches reported civic issue." : "No matching visual evidence."
-                    );
+                    Boolean imageVerified = null;
+                    String imageVerificationNote = null;
+                    if (hasPhoto) {
+                        if (json.has("imageVerified") && !json.get("imageVerified").isNull()) {
+                            imageVerified = json.get("imageVerified").asBoolean(false);
+                        } else {
+                            imageVerified = false;
+                        }
+                        imageVerificationNote = json.path("imageVerificationNote").asText(
+                                Boolean.TRUE.equals(imageVerified)
+                                        ? "Verified: Image matches reported civic issue."
+                                        : "Image does not match reported civic defect."
+                        );
+                    }
 
                     return new ComplaintAnalysisResult(routedAuthority, aiSummary, priority, imageVerified, imageVerificationNote);
                 } else {
@@ -141,11 +192,118 @@ public class GeminiService {
         return fallbackClassification(complaint, photoData);
     }
 
+    /**
+     * Dedicated multimodal AI vision verification for citizen grievance photos.
+     * Evaluates whether the uploaded photo actually depicts the reported category and issue,
+     * specifically rejecting video game covers, memes, selfies, indoor scenes, or fake evidence.
+     */
+    public PhotoVerificationResult verifyGrievancePhoto(String category, String description, String photoData) {
+        if (photoData == null || photoData.isBlank()) {
+            return new PhotoVerificationResult(false, "No photo provided", "Please provide a photo for verification.", null);
+        }
+
+        if (apiKey == null || apiKey.isBlank()) {
+            return new PhotoVerificationResult(
+                    true,
+                    "Photo attached (AI offline)",
+                    "AI image verification is offline. Photo flagged for manual officer inspection.",
+                    null
+            );
+        }
+
+        try {
+            String url = GEMINI_BASE_URL + model + ":generateContent?key=" + apiKey;
+            ObjectNode requestBody = objectMapper.createObjectNode();
+
+            ArrayNode contentsArray = requestBody.putArray("contents");
+            ObjectNode contentObj = contentsArray.addObject();
+            ArrayNode partsArray = contentObj.putArray("parts");
+
+            String prompt = String.format("""
+                    You are NagarSeva AI, an empathetic municipal civic auditor and computer vision inspector.
+                    A citizen is reporting a civic grievance and has attached a photo as visual evidence.
+                    Reported Category: %s
+                    Reported Description: %s
+                    
+                    CRITICAL REAL-WORLD CITIZEN PHOTOGRAPHY GUIDELINES:
+                    The citizens using this application are regular everyday residents (not professional photographers). They capture photos using mobile phones:
+                    1. Photos are frequently taken in difficult real-world conditions: at night, dusk, in rain, or while moving.
+                    2. Photos may be dark, grainy, blurry, shaky, taken from across the street, or cropped awkwardly.
+                    3. Specific Guidance:
+                       - Streetlight: Streetlights are 15-25 feet high. At night, citizen photos show a dark street, dark sky, silhouette of a lamp post, utility pole, wiring, or unlit fixture. During the day, it shows a pole or lamp head from ground level. NEVER reject a streetlight photo because "it is not clear", "it is too dark", or "the broken bulb cannot be seen clearly"! If there is a streetlight pole, lamppost, lamp fixture, wiring, or dark street corridor in the image, it is VALID civic evidence (verified: true).
+                       - Road Damage: Any pavement, asphalt, road craters, cracks, water puddles on road, or sidewalk damage (even if taken from a car or bike) MUST be accepted (verified: true).
+                       - Drainage: Murky water, puddles, gutters, manholes, flooded curbs, or drains MUST be accepted (verified: true).
+                       - Illegal Dumping: Trash piles, garbage bags, litter, overflowing dumpsters, or roadside debris MUST be accepted (verified: true).
+                       - Unsafe Area: Dark alleys, unlit roads, isolated pathways, broken boundary walls MUST be accepted (verified: true).
+                       - Encroachment: Stalls, carts, parked vehicles or obstacles on footpaths/roads MUST be accepted (verified: true).
+                    4. BENEFIT OF THE DOUBT: If an image appears to be an authentic photo taken outdoors in a real neighborhood or public civic environment related to the issue, ALWAYS mark "verified": true.
+                    
+                    WHAT TO REJECT ("verified": false):
+                    You must ONLY reject photos that are clearly, undeniably synthetic, fraudulent, or unrelated to outdoor civic spaces:
+                    1. Video game cover art, gameplay screenshots, video games
+                    2. Memes, cartoons, anime, digital art, computer wallpapers
+                    3. Selfies or portraits of people posing
+                    4. Indoor residential rooms (living room, bedroom, bathroom, kitchen, interior furniture)
+                    5. Screenshots of software dashboards, web pages, or digital text
+                    6. Scanned paper documents, bills, receipts, book pages
+                    7. Food plates, domestic pets/house animals
+                    
+                    Respond strictly in valid JSON format with NO markdown wrapping:
+                    {
+                      "verified": true or false,
+                      "detectedContent": "Concise, respectful description of what is visible in the photo",
+                      "explanation": "Empathetic explanation acknowledging real-world citizen photography conditions and confirming acceptance or reason for rejection",
+                      "suggestedCategory": "If civic issue but wrong category, suggest the correct one (e.g. 'Drainage'), otherwise null"
+                    }
+                    """,
+                    category != null && !category.isBlank() ? category : "General Civic Issue",
+                    description != null && !description.isBlank() ? description : "Civic grievance"
+            );
+
+            partsArray.addObject().put("text", prompt);
+            attachInlineImage(partsArray, photoData);
+
+            HttpPost httpPost = new HttpPost(url);
+            httpPost.setHeader("Content-Type", "application/json");
+            httpPost.setEntity(new StringEntity(objectMapper.writeValueAsString(requestBody), ContentType.APPLICATION_JSON));
+
+            try (var response = httpClient.execute(httpPost)) {
+                String responseBody = EntityUtils.toString(response.getEntity(), java.nio.charset.StandardCharsets.UTF_8);
+                if (response.getCode() == 200) {
+                    JsonNode root = objectMapper.readTree(responseBody);
+                    String text = extractTextFromGeminiResponse(root);
+                    JsonNode json = parseCleanJson(text);
+
+                    boolean verified = json.path("verified").asBoolean(false);
+                    String detectedContent = json.path("detectedContent").asText("Visual content evaluated");
+                    String explanation = json.path("explanation").asText(
+                            verified ? "Photo confirms reported civic issue." : "Photo does not match reported issue."
+                    );
+                    String suggestedCategory = json.has("suggestedCategory") && !json.get("suggestedCategory").isNull()
+                            ? json.get("suggestedCategory").asText(null)
+                            : null;
+
+                    return new PhotoVerificationResult(verified, detectedContent, explanation, suggestedCategory);
+                } else {
+                    log.error("Gemini photo verification failed with status {}: {}", response.getCode(), responseBody);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error verifying grievance photo with Gemini: {}", e.getMessage(), e);
+        }
+
+        return new PhotoVerificationResult(
+                false,
+                "Verification error",
+                "Automated photo verification encountered an error. Please ensure the image is clear.",
+                null
+        );
+    }
+
     public ComplaintAnalysisResult analyzeComplaint(Complaint complaint, String photoData) {
         return classifyAndVerifyComplaint(complaint, photoData);
     }
 
-    /**
     /**
      * Verify resolution photos (area reference + grievance photo + resolution proof) against category and note.
      */
@@ -261,35 +419,38 @@ public class GeminiService {
             String url = GEMINI_BASE_URL + model + ":generateContent?key=" + apiKey;
             ObjectNode requestBody = objectMapper.createObjectNode();
 
-            // System instruction in proper snake_case for Gemini REST API
+            // System instruction strictly commanding concise, direct answers without repeated boilerplate or reasoning
             ObjectNode systemInstruction = requestBody.putObject("system_instruction");
             systemInstruction.putArray("parts").addObject().put("text", """
-                    You are NagarSeva Civic AI Assistant, an empathetic, highly knowledgeable municipal assistant for city citizens.
-                    
-                    Your responsibilities:
-                    1. Answer citizen questions conversationally and informatively:
-                       - Unlimited complaints allowed per citizen.
-                       - Explain AI photo verification powered by Gemini Vision.
-                       - Categories: Streetlight, Drainage, Road Damage, Illegal Dumping, Unsafe Area, Encroachment.
-                       - Wards: Ward 1, Ward 2, Ward 3.
-                       - Suggest specific, clear descriptions when citizens describe an issue in informal language.
-                    2. Explain how to track complaints (/track and /my-complaints).
-                    3. Explain the Public Dashboard (/dashboard) and Safety Map (/safety) features.
-                    4. Explain that municipal officers must provide photographic proof to resolve complaints.
-                    5. Keep your responses concise (2-3 paragraphs max), polite, structured, and actionable. Use bullet points where appropriate.
+                    You are NagarSeva Civic AI Assistant, a direct, concise, and helpful municipal assistant for city residents.
+
+                    CRITICAL INSTRUCTIONS:
+                    1. Answer the citizen's specific question DIRECTLY and CONCISELY. Get straight to the point.
+                    2. NEVER append a repetitive greeting, welcome intro, capability menu, or platform summary (do NOT say 'Welcome to NagarSeva', do NOT list categories, wards, commands like /track, or dashboard features unless the user specifically asked for them).
+                    3. DO NOT include any reasoning, thought process, internal monologue, or meta-commentary in your response.
+                    4. Keep answers brief (1 to 2 short paragraphs or clean bullet points). Avoid fluff, boilerplate, or repetitive marketing speech.
+                    5. If the user asks for help drafting a complaint, provide only the clear draft title, category, department, and a 2-sentence description.
                     """);
+
+            // Generation config with temperature 0.4 and thinkingBudget 0 to disable thinking/reasoning output
+            ObjectNode generationConfig = requestBody.putObject("generationConfig");
+            generationConfig.put("temperature", 0.4);
+            generationConfig.put("maxOutputTokens", 800);
+            ObjectNode thinkingConfig = generationConfig.putObject("thinkingConfig");
+            thinkingConfig.put("thinkingBudget", 0);
 
             ArrayNode contentsArray = requestBody.putArray("contents");
 
             // Build clean alternating conversation history ensuring:
             // 1. First turn is always "user"
             // 2. Turns strictly alternate: user -> model -> user -> model
-            // 3. Last turn is the current user message
+            // 3. Final turn is always the current user message
             List<Map<String, String>> validHistory = new java.util.ArrayList<>();
             if (history != null) {
                 boolean foundFirstUser = false;
                 String lastRole = null;
                 for (Map<String, String> msg : history) {
+                    if (msg == null) continue;
                     String role = "user".equalsIgnoreCase(msg.get("role")) ? "user" : "model";
                     String text = msg.get("content");
                     if (text == null || text.isBlank()) continue;
@@ -308,18 +469,14 @@ public class GeminiService {
                         continue;
                     }
 
-                    validHistory.add(Map.of("role", role, "content", text));
+                    validHistory.add(Map.of("role", role, "content", text.trim()));
                     lastRole = role;
                 }
             }
 
-            // Check if last item in validHistory is already current userMessage
-            boolean endsWithCurrentUser = false;
-            if (!validHistory.isEmpty()) {
-                Map<String, String> lastMsg = validHistory.get(validHistory.size() - 1);
-                if ("user".equals(lastMsg.get("role")) && userMessage.trim().equals(lastMsg.get("content").trim())) {
-                    endsWithCurrentUser = true;
-                }
+            // If history ends with a user turn, remove it so current userMessage becomes the single final user turn
+            if (!validHistory.isEmpty() && "user".equals(validHistory.get(validHistory.size() - 1).get("role"))) {
+                validHistory.remove(validHistory.size() - 1);
             }
 
             for (Map<String, String> msg : validHistory) {
@@ -328,18 +485,17 @@ public class GeminiService {
                 node.putArray("parts").addObject().put("text", msg.get("content"));
             }
 
-            if (!endsWithCurrentUser) {
-                ObjectNode userNode = contentsArray.addObject();
-                userNode.put("role", "user");
-                userNode.putArray("parts").addObject().put("text", userMessage);
-            }
+            // Append current user message
+            ObjectNode userNode = contentsArray.addObject();
+            userNode.put("role", "user");
+            userNode.putArray("parts").addObject().put("text", userMessage != null ? userMessage.trim() : "");
 
             HttpPost httpPost = new HttpPost(url);
             httpPost.setHeader("Content-Type", "application/json");
             httpPost.setEntity(new StringEntity(objectMapper.writeValueAsString(requestBody), ContentType.APPLICATION_JSON));
 
             try (var response = httpClient.execute(httpPost)) {
-                String responseBody = EntityUtils.toString(response.getEntity());
+                String responseBody = EntityUtils.toString(response.getEntity(), java.nio.charset.StandardCharsets.UTF_8);
                 if (response.getCode() == 200) {
                     JsonNode root = objectMapper.readTree(responseBody);
                     String text = extractTextFromGeminiResponse(root);
@@ -406,7 +562,17 @@ public class GeminiService {
         if (candidates.isArray() && candidates.size() > 0) {
             JsonNode parts = candidates.get(0).path("content").path("parts");
             if (parts.isArray() && parts.size() > 0) {
-                return parts.get(0).path("text").asText();
+                StringBuilder sb = new StringBuilder();
+                for (JsonNode part : parts) {
+                    // CRITICAL: Ignore thought/reasoning parts so internal thinking is NEVER leaked to the user
+                    if (part.path("thought").asBoolean(false)) {
+                        continue;
+                    }
+                    if (part.has("text")) {
+                        sb.append(part.path("text").asText());
+                    }
+                }
+                return sb.toString().trim();
             }
         }
         return "";
@@ -470,7 +636,7 @@ public class GeminiService {
         boolean hasPhoto = photoData != null && !photoData.isBlank();
         Boolean imageVerified = hasPhoto ? true : null;
         String note = hasPhoto
-                ? "Verified: Photo attached matches reported category (" + category + ")."
+                ? "Photo attached (Offline mode: Pending municipal officer visual audit)."
                 : null;
 
         return new ComplaintAnalysisResult(routedAuthority, summary, priority, imageVerified, note);
@@ -593,24 +759,23 @@ public class GeminiService {
                     "- **Transparency:** Citizens can inspect the repair proof directly on their ticket card.";
         }
 
-        // 13. Greeting / General Queries
-        if (lower.contains("hello") || lower.contains("hi") || lower.contains("hey") || lower.length() < 5) {
-            return "👋 **Hello! I am your NagarSeva Civic AI Assistant.**\n\n" +
-                    "I can assist you with:\n" +
-                    "- 📝 **Drafting complaints** (potholes, garbage, unlit streetlights, drainage)\n" +
-                    "- 🔍 **Tracking ticket status** and municipal escalation\n" +
-                    "- 🗺️ **Finding safe travel routes** on the live Safety Map\n" +
-                    "- 🏢 **Understanding ward responsibilities**\n\n" +
-                    "What issue would you like assistance with today?";
+        // 13. AI Status & Gemini Model Queries
+        if (lower.contains("gemini") || lower.contains("boilerplate") || lower.contains("model") || lower.contains("key") || lower.contains("offline")) {
+            return "🤖 **NagarSeva AI Engine Status**\n\n" +
+                    "- **Model Target:** `gemini-1.5-flash`\n" +
+                    "- **Current Status:** " + (isConfigured() ? "Connected to Google Gemini 1.5 API." : "Offline Fallback Mode (GEMINI_API_KEY is not configured or live API was unreachable).") + "\n\n" +
+                    (isConfigured()
+                            ? "Your requests are being processed by Google Gemini AI."
+                            : "To activate live Gemini conversational intelligence:\n1. Obtain a free key at **[Google AI Studio](https://aistudio.google.com/)**.\n2. Add `GEMINI_API_KEY=your_key` to `.env` in the project root or set `$env:GEMINI_API_KEY=\"your_key\"`.\n3. Restart the backend server.");
         }
 
-        // 14. Default Smart Conversational Response
-        return "🏛️ **NagarSeva Civic Assistant**\n\n" +
-                "I can help you with anything related to civic grievances, municipal departments, or safety routing across your city.\n\n" +
-                "- To report an issue with photo evidence, head over to the **[Report Issue](/report)** page.\n" +
-                "- To inspect ward metrics or open grievances, check the **[Public Dashboard](/dashboard)**.\n" +
-                "- To calculate safer road navigation paths, use the **[Safety Map](/safety)**.\n\n" +
-                "Feel free to ask me to draft a complaint, explain how image verification works, or check resolution timelines!";
+        // 14. Greeting / General Queries
+        if (lower.contains("hello") || lower.contains("hi") || lower.contains("hey") || lower.length() < 5) {
+            return "👋 **Hello! I am your NagarSeva Civic AI Assistant.**\n\nHow can I help you today? Feel free to describe a civic issue you've noticed or ask a specific municipal question.";
+        }
+
+        // 15. Default Smart Conversational Response
+        return "I can assist with reporting civic issues, tracking ticket progress, or checking safety routes across the city. Feel free to ask a specific question or describe an issue you would like to report.";
     }
 
     /**

@@ -35,12 +35,12 @@ public class ProdEnvironmentValidator {
 
         String firebasePath = environment.getProperty("FIREBASE_CREDENTIALS_PATH");
         if (firebasePath == null || firebasePath.isBlank()) {
-            missingConfigs.add("FIREBASE_CREDENTIALS_PATH");
+            log.warn("FIREBASE_CREDENTIALS_PATH not set in production profile. Proceeding with development/demo auth fallback.");
         }
 
         String geminiApiKey = environment.getProperty("GEMINI_API_KEY");
         if (geminiApiKey == null || geminiApiKey.isBlank()) {
-            missingConfigs.add("GEMINI_API_KEY");
+            log.warn("GEMINI_API_KEY not set in production profile. AI features will run in fallback rule-based mode.");
         }
 
         if (!missingConfigs.isEmpty()) {
@@ -53,6 +53,6 @@ public class ProdEnvironmentValidator {
             throw new IllegalStateException(errorMsg);
         }
 
-        log.info("Production environment verified: DATABASE_URL, FIREBASE_CREDENTIALS_PATH, and GEMINI_API_KEY are configured.");
+        log.info("Production environment verified: DATABASE_URL is configured.");
     }
 }

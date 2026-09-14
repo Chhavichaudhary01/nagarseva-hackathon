@@ -1,0 +1,36 @@
+# Auto-detect text files and normalize line endings to LF on commit/checkout
+* text=auto eol=lf
+
+# Windows scripts (must maintain CRLF for batch execution)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts (must maintain LF for Linux/macOS/Docker execution)
+*.sh text eol=lf
+
+# Source Code
+*.java text diff=java eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.xml text eol=lf
+*.properties text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+
+# Binary Assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.jar binary
+*.war binary
+*.class binary
+*.pdf binary

@@ -28,8 +28,9 @@ For complete API specifications, endpoint tables, and component deep dives, see 
   - Automatically assesses grievance descriptions and photos for credibility.
   - Automatically routes complaints to the appropriate municipal department (Roads, Electricity, Water & Sanitation, Waste Management, Public Health).
   - Categorizes priority (`HIGH`, `MEDIUM`, `LOW`) and generates AI summaries for officials.
-  - Verifies before/after resolution proof photos before grievances are marked resolved.
-  - Graceful deterministic fallback when Gemini API key is absent.
+  - **Three-Image Resolution Verification**: Compares historical area reference, citizen defect photo, and officer fix photo to verify repairs.
+  - **Civic AI Assistant**: Interactive conversational chatbot (`/api/ai/chat`) helping citizens report issues, track tickets, and check safety.
+  - Automatic `.env` file discovery and graceful deterministic offline fallback when Gemini API key is absent.
 
 - **Authentication & Role-Based Access (Firebase Auth)**:
   - Citizens report and track their own issues.
@@ -52,11 +53,35 @@ For complete API specifications, endpoint tables, and component deep dives, see 
 
 ## ⚡ Quick Start
 
-### 1. Run the Backend (Spring Boot)
+### 🐳 Option A: 1-Command Setup with Docker (Recommended)
+
+Run the full stack (PostgreSQL 16, Redis 7, Spring Boot, React/Vite) with zero local tool dependencies:
+
+```bash
+# 1. Copy environment template
+cp .env.example .env
+
+# 2. Spin up all services
+docker compose up --build
+```
+- **Frontend UI**: `http://localhost:5173`
+- **Backend API**: `http://localhost:8080`
+- **PostgreSQL**: `localhost:5432` | **Redis**: `localhost:6379`
+
+*For team collaboration and conflict-free contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).*
+
+---
+
+### 💻 Option B: Run Locally without Docker
+
+#### 1. Run the Backend (Spring Boot)
 ```bash
 cd Nagar-Seva/backend
 
-# Optional: Set your Gemini API key for live AI routing
+# Optional: Configure your Gemini 1.5 API key for live AI intelligence
+# Copy the template and add your key from https://aistudio.google.com/:
+# cp .env.example .env (or edit Nagar-Seva/backend/.env)
+# Alternatively, set in environment:
 # Windows PowerShell: $env:GEMINI_API_KEY="your-gemini-key"
 # Linux/macOS:        export GEMINI_API_KEY="your-gemini-key"
 
@@ -64,6 +89,7 @@ mvn spring-boot:run
 ```
 - Backend runs on `http://localhost:8080`
 - In-memory H2 Console (dev): `http://localhost:8080/h2-console`
+- AI Engine Status check: `http://localhost:8080/api/ai/status`
 
 ### 2. Run the Frontend (React + Vite)
 ```bash
@@ -77,7 +103,7 @@ npm run dev
 
 ## 🧪 Testing
 
-Run the full automated test suite (31 unit & MockMvc integration tests):
+Run the full automated test suite (45 unit & MockMvc integration tests):
 ```bash
 cd Nagar-Seva/backend
 mvn test

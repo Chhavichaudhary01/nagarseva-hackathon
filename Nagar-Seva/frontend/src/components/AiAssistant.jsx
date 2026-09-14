@@ -12,6 +12,7 @@ export default function AiAssistant() {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [aiStatus, setAiStatus] = useState({ configured: true, model: 'gemini-3.5-flash', status: 'ONLINE' });
   const messagesEndRef = useRef(null);
   const navigate = useNavigate();
 
@@ -26,6 +27,14 @@ export default function AiAssistant() {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
+  useEffect(() => {
+    apiClient.get('/api/ai/status')
+      .then(res => {
+        if (res.data) setAiStatus(res.data);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -116,8 +125,10 @@ export default function AiAssistant() {
                   NagarSeva AI
                 </h3>
                 <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                  <span className="text-xs text-white/90 font-medium">Gemini 1.5 Flash • Civic Intelligence</span>
+                  <span className={`w-2 h-2 rounded-full ${aiStatus.configured ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                  <span className="text-xs text-white/90 font-medium">
+                    Gemini 1.5 Flash • {aiStatus.configured ? 'Civic Intelligence' : 'Demo Mode'}
+                  </span>
                 </div>
               </div>
             </div>

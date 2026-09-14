@@ -73,10 +73,12 @@ NagarSeva uses **Google Gemini (`gemini-1.5-flash`)** as a unified AI engine for
 2. **AI-Powered Department Routing & Priority**:
    - Automatically classifies the grievance to the right department (*Electricity*, *Water Board*, *Municipal Road Dept*, *Sanitation*, *Police / Women Safety Cell*).
    - Assigns priority (`LOW`, `MEDIUM`, `HIGH`) and generates a concise executive `aiSummary`.
-3. **Resolution Proof Verification**:
-   - When municipal staff submit a resolution photo, Gemini analyzes the image to confirm the repair has been executed before updating resolution records.
-4. **NagarSeva Civic AI Assistant (Chatbot)**:
-   - Floating interactive assistant on the website powered by `POST /api/ai/chat`.
+3. **Three-Image Resolution Proof Verification**:
+   - Compares an Area-Reference Photo (historical location baseline) + Grievance Photo (citizen's reported problem) + Resolution Photo (officer's remediation proof) to verify repairs before closing tickets.
+4. **NagarSeva Civic AI Assistant (Chatbot & Grievance Refinement)**:
+   - Floating interactive assistant on the website powered by `POST /api/ai/chat` (strictly alternating multiturn context).
+   - Real-time engine health and model status via `GET /api/ai/status`.
+   - AI grievance drafting and formalization via `POST /api/ai/refine-grievance`.
    - Assists citizens in drafting well-formatted complaints, understanding ward rules, checking safety routes, and navigating the web application.
 
 ---
@@ -98,9 +100,20 @@ NagarSeva uses **Google Gemini (`gemini-1.5-flash`)** as a unified AI engine for
 
 1. Go to [Google AI Studio](https://aistudio.google.com/).
 2. Click **Get API key** and create a new key.
-3. Add it to your environment variables or in `application.properties`:
+3. Add it to a `.env` file in the backend directory (or workspace root):
+   ```properties
+   GEMINI_API_KEY=your_gemini_api_key_here
+   GEMINI_MODEL=gemini-1.5-flash
+   ```
+   *The backend automatically detects and loads `.env` on boot.*
+   
+   Alternatively, export it in your shell:
    ```bash
+   # Linux/macOS
    export GEMINI_API_KEY=your_gemini_api_key_here
+
+   # Windows (PowerShell)
+   $env:GEMINI_API_KEY="your_gemini_api_key_here"
    ```
 *(Note: If no API key is configured, the backend automatically uses graceful offline fallback routing without crashing).*
 
@@ -159,11 +172,14 @@ Navigate to `http://localhost:8080/h2-console`
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/ai/chat` | NagarSeva Civic AI Assistant conversational endpoint |
+| POST | `/api/ai/chat` | NagarSeva Civic AI Assistant conversational chatbot |
+| GET | `/api/ai/status` | Real-time AI engine and Gemini 1.5 status check |
+| POST | `/api/ai/refine-grievance` | AI-powered grievance drafting & refinement |
+| GET | `/demo-assets/**` | Bundled demo image bank (area-ref, grievance, resolution) |
 | GET | `/api/dashboard/stats` | Aggregated civic complaint statistics |
 | GET | `/api/safety/heatmap` | Safety heatmap coordinates and risk ratings |
 | GET | `/api/safety/route-check` | Real-time path safety checker |
-| GET | `/api/complaints` | Public complaints list |
+| GET | `/api/complaints` | Public complaints list (paginated) |
 | GET | `/api/complaints/{id}` | Complaint details by ID |
 
 ### Citizen Protected Endpoints (`Authorization: Bearer <idToken>`)
@@ -183,7 +199,22 @@ Navigate to `http://localhost:8080/h2-console`
 |--------|----------|---------------|-------------|
 | GET | `/api/admin/complaints` | `ROLE_ADMIN` | Comprehensive admin complaint directory |
 | GET | `/api/admin/stats` | `ROLE_ADMIN` | Detailed administrative analytics & ward metrics |
-| PATCH | `/api/admin/complaints/{id}/resolve` | `ROLE_ADMIN` | Mark resolved with Gemini Resolution Proof Verification |
+| PATCH | `/api/admin/complaints/{id}/resolve` | `ROLE_ADMIN` | Mark resolved with Three-Image Gemini Resolution Proof Verification |
+
+---
+
+## 🧪 Testing
+
+Run the automated backend test suite (45 tests):
+```bash
+mvn test
+```
+
+Key test suites:
+- `GeminiServiceTest` (12 tests): Multimodal complaint analysis, 3-image resolution auditing, live Gemini 1.5 chat, multiturn history sanitization, and fail-closed error handling.
+- `ComplaintControllerTest`: Rate limiting, 2MB size cap, pagination, and submission validation.
+- `AdminControllerTest`: Role access control, department scoping, and ticket resolution.
+- `FirebaseAuthFilterProdTest`: Hardened production security gate checks.
 
 ---
 
