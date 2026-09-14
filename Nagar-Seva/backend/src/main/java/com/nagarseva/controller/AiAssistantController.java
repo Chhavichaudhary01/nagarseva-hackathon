@@ -19,6 +19,24 @@ public class AiAssistantController {
     public record ChatResponse(String reply) {}
 
     public record RefineGrievanceRequest(String input, String category) {}
+    public record VerifyPhotoRequest(String category, String description, String photoData) {}
+
+    /**
+     * POST /api/ai/verify-photo - Multimodal AI vision verification of grievance photos
+     */
+    @PostMapping("/verify-photo")
+    public ResponseEntity<?> verifyGrievancePhoto(@RequestBody VerifyPhotoRequest request) {
+        if (request.photoData() == null || request.photoData().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Photo data cannot be empty"));
+        }
+
+        GeminiService.PhotoVerificationResult result = geminiService.verifyGrievancePhoto(
+                request.category(),
+                request.description(),
+                request.photoData()
+        );
+        return ResponseEntity.ok(result);
+    }
 
     /**
      * POST /api/ai/chat - Civic AI Assistant chatbot endpoint
@@ -44,5 +62,17 @@ public class AiAssistantController {
 
         Map<String, Object> refined = geminiService.refineGrievance(request.input(), request.category());
         return ResponseEntity.ok(refined);
+    }
+
+    /**
+     * GET /api/ai/status - Returns current AI engine status and model
+     */
+    @GetMapping("/status")
+    public ResponseEntity<?> getAiStatus() {
+        return ResponseEntity.ok(Map.of(
+                "model", geminiService.getModel(),
+                "configured", geminiService.isConfigured(),
+                "status", geminiService.isConfigured() ? "ONLINE" : "OFFLINE_FALLBACK"
+        ));
     }
 }

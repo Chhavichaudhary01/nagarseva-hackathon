@@ -205,5 +205,40 @@ public class ComplaintControllerTest {
                 .andExpect(jsonPath("$.areaReferencePhotoUrl").value(containsString("area-reference/street_01.jpg")))
                 .andExpect(jsonPath("$.areaReferenceCapturedAt").value("2026-01-15"));
     }
+
+    @Test
+    public void verifyPhotoEndpoint_withMissingPhoto_returnsBadRequest() throws Exception {
+        String payload = """
+        {
+            "category": "Road Damage",
+            "description": "potholes",
+            "photoData": ""
+        }
+        """;
+
+        mockMvc.perform(post("/api/ai/verify-photo")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Photo data cannot be empty"));
+    }
+
+    @Test
+    public void verifyPhotoEndpoint_withValidPayload_returnsEvaluation() throws Exception {
+        String payload = """
+        {
+            "category": "Road Damage",
+            "description": "potholes on main road",
+            "photoData": "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+        }
+        """;
+
+        mockMvc.perform(post("/api/ai/verify-photo")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detectedContent").exists())
+                .andExpect(jsonPath("$.explanation").exists());
+    }
 }
 

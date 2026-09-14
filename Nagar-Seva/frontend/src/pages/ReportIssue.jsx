@@ -81,6 +81,9 @@ export default function ReportIssue() {
 
   const [mapCenter, setMapCenter] = useState([28.6139, 77.2090]);
   const [photoPreview, setPhotoPreview] = useState('');
+  const [photoChecking, setPhotoChecking] = useState(false);
+  const [photoVerificationResult, setPhotoVerificationResult] = useState(null);
+  const [manualReviewRequested, setManualReviewRequested] = useState(false);
   const [loading, setLoading] = useState(false);
   const [geoLoading, setGeoLoading] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -325,6 +328,37 @@ export default function ReportIssue() {
     }
   };
 
+  // Multimodal AI Vision verification for grievance photo
+  const verifyUploadedPhoto = async (base64String, cat, desc) => {
+    if (!base64String) return;
+    setPhotoChecking(true);
+    setPhotoVerificationResult(null);
+    setManualReviewRequested(false);
+    try {
+      const response = await apiClient.post('/api/ai/verify-photo', {
+        category: cat || formData.category || 'Road Damage',
+        description: desc || formData.description || 'Civic grievance',
+        photoData: base64String,
+      });
+      if (response.data) {
+        setPhotoVerificationResult(response.data);
+      }
+    } catch (err) {
+      console.warn('AI photo verification error:', err);
+    } finally {
+      setPhotoChecking(false);
+    }
+  };
+
+  const handleRemovePhoto = (e) => {
+    if (e) e.stopPropagation();
+    setPhotoPreview('');
+    setFormData(prev => ({ ...prev, photoData: '' }));
+    setPhotoVerificationResult(null);
+    setManualReviewRequested(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handlePhotoChange = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -338,9 +372,7 @@ export default function ReportIssue() {
       if (file.size > maxSizeBytes) {
         const fileMb = (file.size / (1024 * 1024)).toFixed(2);
         setMessage(`❌ Selected photo exceeds 2MB limit (selected: ${fileMb}MB). Please upload a smaller or compressed image.`);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        setPhotoPreview('');
-        setFormData(prev => ({ ...prev, photoData: '' }));
+        handleRemovePhoto();
         return;
       }
 
@@ -353,6 +385,7 @@ export default function ReportIssue() {
           photoData: base64String,
         }));
         setMessage('');
+        verifyUploadedPhoto(base64String, formData.category, formData.description);
       };
       reader.onerror = () => {
         setMessage('❌ Error reading photo file.');
@@ -374,9 +407,21 @@ export default function ReportIssue() {
         return;
       }
 
+      // Block submission if AI photo verification explicitly rejected the image (e.g. game cover, meme, fake image)
+      // UNLESS the citizen explicitly requested on-site manual officer inspection
+      if (formData.photoData && photoVerificationResult && photoVerificationResult.verified === false && !manualReviewRequested) {
+        setMessage(`❌ Cannot submit: The attached photo does not match the reported issue. Detected: "${photoVerificationResult.detectedContent}". ${photoVerificationResult.explanation} Please remove the photo or check "Submit anyway for on-site physical inspection".`);
+        setLoading(false);
+        return;
+      }
+
+      const finalDescription = manualReviewRequested && formData.photoData
+        ? formData.description + " [Citizen Note: On-site photo submitted for manual officer inspection]"
+        : formData.description;
+
       const complaintData = {
         category: formData.category,
-        description: formData.description,
+        description: finalDescription,
         location: formData.location,
         ward: formData.ward,
         latitude: parseFloat(formData.latitude) || 28.6139,
@@ -411,6 +456,7 @@ export default function ReportIssue() {
       });
       setSearchQuery('');
       setPhotoPreview('');
+      setPhotoVerificationResult(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -520,7 +566,12 @@ export default function ReportIssue() {
                 <button
                   key={cat.label}
                   type="button"
-                  onClick={() => setFormData(prev => ({ ...prev, category: cat.label }))}
+                  onClick={() => {
+                    setFormData(prev => ({ ...prev, category: cat.label }));
+                    if (formData.photoData) {
+                      verifyUploadedPhoto(formData.photoData, cat.label, formData.description);
+                    }
+                  }}
                   className={`p-3 rounded-2xl text-xs font-bold transition flex items-center gap-2 border ${
                     formData.category === cat.label
                       ? 'bg-violet-50 border-violet-500 text-violet-700 shadow-xs'
@@ -716,9 +767,21 @@ export default function ReportIssue() {
 
           {/* Grievance Photo Evidence */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-              Grievance Photo Proof (For AI Verification)
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500">
+                Grievance Photo Proof (AI Vision Checked)
+              </label>
+              {photoPreview && (
+                <button
+                  type="button"
+                  onClick={handleRemovePhoto}
+                  className="text-xs font-bold text-rose-600 hover:text-rose-800 transition"
+                >
+                  ✕ Remove Photo
+                </button>
+              )}
+            </div>
+
             <div
               className="p-4 bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl text-center hover:bg-gray-100/80 transition cursor-pointer"
               onClick={() => fileInputRef.current?.click()}
@@ -735,7 +798,7 @@ export default function ReportIssue() {
                   <img
                     src={photoPreview}
                     alt="Preview"
-                    className="max-h-48 rounded-xl object-contain shadow-xs mb-2"
+                    className="max-h-48 rounded-xl object-contain shadow-xs mb-2 border border-gray-200"
                   />
                   <p className="text-xs font-bold text-violet-600">Click to choose a different photo</p>
                 </div>
@@ -744,9 +807,115 @@ export default function ReportIssue() {
                   <span className="text-2xl mb-1 block">📷</span>
                   <p className="text-xs font-bold text-gray-700">Click to upload photo evidence</p>
                   <p className="text-[11px] text-gray-400 mt-0.5">Supports PNG, JPG, JPEG (Max 2MB)</p>
+                  <p className="text-[10px] text-violet-600 font-semibold mt-1">✨ Scanned by Gemini AI Vision for civic defect verification</p>
                 </div>
               )}
             </div>
+
+            {/* AI Vision Scanning Indicator */}
+            {photoChecking && (
+              <div className="mt-2.5 p-3 bg-violet-50/90 border border-violet-200 rounded-2xl flex items-center justify-center gap-2.5 text-xs text-violet-800 font-bold animate-pulse">
+                <div className="w-3.5 h-3.5 border-2 border-violet-600 border-t-transparent rounded-full animate-spin"></div>
+                <span>Gemini Vision AI is analyzing photo for "{formData.category || 'civic issue'}"...</span>
+              </div>
+            )}
+
+            {/* AI Vision Approval Card */}
+            {!photoChecking && photoVerificationResult && photoVerificationResult.verified === true && (
+              <div className="mt-2.5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs space-y-1 shadow-xs">
+                <div className="flex items-center gap-1.5 font-bold text-emerald-900">
+                  <span>✅</span>
+                  <span>AI Vision Verified: Genuine Civic Evidence</span>
+                </div>
+                <p className="text-emerald-800 text-[11px] leading-relaxed">
+                  <strong>Detected:</strong> {photoVerificationResult.detectedContent}. {photoVerificationResult.explanation}
+                </p>
+              </div>
+            )}
+
+            {/* AI Vision Rejection Card (e.g. Game Cover, Meme, Selfie, Fake) */}
+            {!photoChecking && photoVerificationResult && photoVerificationResult.verified === false && (
+              <div className="mt-2.5 p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl text-xs space-y-2 shadow-sm text-left">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-extrabold text-rose-900">
+                    <span className="text-base">❌</span>
+                    <span>AI Vision Rejected: Photo Mismatch</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemovePhoto}
+                    className="px-2.5 py-1 bg-rose-200/70 hover:bg-rose-200 text-rose-900 rounded-lg text-[11px] font-bold transition"
+                  >
+                    Remove Photo
+                  </button>
+                </div>
+
+                <div className="text-rose-800 text-[11px] leading-relaxed space-y-1">
+                  <p>
+                    <strong>Observed Content:</strong> {photoVerificationResult.detectedContent}
+                  </p>
+                  <p>
+                    {photoVerificationResult.explanation}
+                  </p>
+                </div>
+
+                {photoVerificationResult.suggestedCategory && (
+                  <div className="text-[11px] text-amber-900 font-semibold bg-amber-50 p-2 rounded-xl border border-amber-200 flex items-center justify-between">
+                    <span>💡 Suggested alternative category: <strong>{photoVerificationResult.suggestedCategory}</strong></span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData(prev => ({ ...prev, category: photoVerificationResult.suggestedCategory }));
+                        verifyUploadedPhoto(formData.photoData, photoVerificationResult.suggestedCategory, formData.description);
+                      }}
+                      className="px-2 py-0.5 bg-amber-200 text-amber-900 rounded text-[10px] font-bold"
+                    >
+                      Switch to {photoVerificationResult.suggestedCategory}
+                    </button>
+                  </div>
+                )}
+
+                {manualReviewRequested ? (
+                  <div className="pt-2 border-t border-amber-300/80 bg-amber-50/90 -mx-4 -mb-4 p-3 rounded-b-2xl">
+                    <div className="flex items-center gap-2 text-amber-900 font-bold text-[11px]">
+                      <span>🛡️</span>
+                      <span>Flagged for Zonal Officer On-Site Inspection</span>
+                    </div>
+                    <p className="text-[10px] text-amber-800 mt-0.5">
+                      Your photo will be physically audited by the municipal authority in the field. You can proceed to submit your grievance.
+                    </p>
+                    <label className="flex items-center gap-2 mt-1.5 cursor-pointer text-[10px] text-amber-950 font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={manualReviewRequested}
+                        onChange={(e) => setManualReviewRequested(e.target.checked)}
+                        className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                      />
+                      <span>Uncheck if you prefer to remove or replace the photo instead.</span>
+                    </label>
+                  </div>
+                ) : (
+                  <div className="pt-2 border-t border-rose-200 text-[11px] space-y-2">
+                    <div className="p-2.5 bg-white/80 rounded-xl border border-rose-200">
+                      <label className="flex items-start gap-2 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={manualReviewRequested}
+                          onChange={(e) => setManualReviewRequested(e.target.checked)}
+                          className="mt-0.5 rounded text-violet-600 focus:ring-violet-500 cursor-pointer"
+                        />
+                        <span className="leading-snug text-[11px]">
+                          <strong>This photo was taken on site:</strong> Submit anyway for on-site physical inspection by the municipal officer.
+                        </span>
+                      </label>
+                    </div>
+                    <p className="text-[10px] text-rose-700 font-semibold">
+                      ⛔ If this image was uploaded by mistake, click "Remove Photo" above to submit without an image.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Submit Action */}

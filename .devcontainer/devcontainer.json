@@ -1,0 +1,48 @@
+{
+  "name": "NagarSeva Dev Environment",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "17",
+      "installMaven": "true"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "forwardPorts": [8080, 5173, 5432, 6379],
+  "portsAttributes": {
+    "8080": {
+      "label": "Spring Boot API",
+      "onAutoForward": "notify"
+    },
+    "5173": {
+      "label": "Vite React Frontend",
+      "onAutoForward": "openBrowser"
+    },
+    "5432": {
+      "label": "PostgreSQL Database",
+      "onAutoForward": "silent"
+    },
+    "6379": {
+      "label": "Redis Cache",
+      "onAutoForward": "silent"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "files.eol": "\n",
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  "postCreateCommand": "cd Nagar-Seva/frontend && npm install"
+}

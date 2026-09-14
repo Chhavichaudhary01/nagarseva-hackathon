@@ -23,6 +23,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -296,5 +298,276 @@ public class GeminiServiceTest {
         // Crucial requirement: Must fail closed (false) when API key is missing
         assertFalse(result.resolutionVerified(), "Unconfigured key must default to false (fail-closed)");
         assertTrue(result.resolutionVerificationNote().toLowerCase().contains("manual review required"));
+    }
+
+    @Test
+    public void testChatAssistantWithGemini15Success() throws Exception {
+        geminiService.setApiKey("test-gemini-key");
+        geminiService.setModel("gemini-1.5-flash");
+        geminiService.setHttpClient(stubHttpClient);
+
+        String mockResponseBody = """
+                {
+                  "candidates": [
+                    {
+                      "content": {
+                        "parts": [
+                          {
+                            "text": "Hello citizen! NagarSeva routes road damage reports to the Municipal Road Department within 24 hours."
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        BasicClassicHttpResponse classicResponse = new BasicClassicHttpResponse(200);
+        classicResponse.setEntity(new StringEntity(mockResponseBody, ContentType.APPLICATION_JSON));
+        CloseableHttpResponse response = CloseableHttpResponse.adapt(classicResponse);
+        stubHttpClient.setResponse(response);
+
+        String reply = geminiService.chatAssistant("How are road damage reports handled?", List.of());
+
+        assertNotNull(reply);
+        assertTrue(reply.contains("Municipal Road Department"));
+
+        ClassicHttpRequest sentRequest = stubHttpClient.getLastRequest();
+        assertNotNull(sentRequest);
+        assertTrue(sentRequest.getRequestUri().contains("models/gemini-1.5-flash:generateContent"));
+        assertTrue(sentRequest.getRequestUri().contains("key=test-gemini-key"));
+
+        String payload = EntityUtils.toString(sentRequest.getEntity());
+        JsonNode root = objectMapper.readTree(payload);
+        assertTrue(root.has("system_instruction"));
+        JsonNode genConfig = root.path("generationConfig");
+        assertTrue(genConfig.has("thinkingConfig"));
+        assertEquals(0, genConfig.path("thinkingConfig").path("thinkingBudget").asInt());
+        assertEquals("gemini-1.5-flash", geminiService.getModel());
+    }
+
+    @Test
+    public void testChatAssistantFiltersOutThoughtParts() throws Exception {
+        geminiService.setApiKey("test-gemini-key");
+        geminiService.setHttpClient(stubHttpClient);
+
+        String mockResponseBody = """
+                {
+                  "candidates": [
+                    {
+                      "content": {
+                        "parts": [
+                          {
+                            "thought": true,
+                            "text": "Internal reasoning: Citizen wants to know about road repairs. I should keep it brief and straight to the point without any welcome menu."
+                          },
+                          {
+                            "text": "Pothole complaints are routed directly to the Municipal Road Department for priority asphalt resurfacing."
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        BasicClassicHttpResponse classicResponse = new BasicClassicHttpResponse(200);
+        classicResponse.setEntity(new StringEntity(mockResponseBody, ContentType.APPLICATION_JSON));
+        stubHttpClient.setResponse(CloseableHttpResponse.adapt(classicResponse));
+
+        String reply = geminiService.chatAssistant("How are potholes handled?", List.of());
+
+        assertNotNull(reply);
+        assertFalse(reply.contains("Internal reasoning"), "Thought/reasoning parts must be filtered out");
+        assertTrue(reply.contains("Municipal Road Department"));
+    }
+
+    @Test
+    public void testChatAssistantAlternatingMultiturnHistory() throws Exception {
+        geminiService.setApiKey("test-gemini-key");
+        geminiService.setModel("gemini-1.5-flash");
+        geminiService.setHttpClient(stubHttpClient);
+
+        String mockResponseBody = """
+                {
+                  "candidates": [
+                    {
+                      "content": {
+                        "parts": [
+                          { "text": "Drainage complaints are assigned to the Water Board." }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        BasicClassicHttpResponse classicResponse = new BasicClassicHttpResponse(200);
+        classicResponse.setEntity(new StringEntity(mockResponseBody, ContentType.APPLICATION_JSON));
+        stubHttpClient.setResponse(CloseableHttpResponse.adapt(classicResponse));
+
+        // Send history with leading model greeting, alternating turns, and an extra user turn
+        List<Map<String, String>> history = List.of(
+                Map.of("role", "assistant", "content", "Hello citizen!"),
+                Map.of("role", "user", "content", "I have a blocked drain"),
+                Map.of("role", "assistant", "content", "Which ward are you in?"),
+                Map.of("role", "user", "content", "Ward 2")
+        );
+
+        String reply = geminiService.chatAssistant("What department handles it?", history);
+        assertEquals("Drainage complaints are assigned to the Water Board.", reply);
+
+        ClassicHttpRequest sentRequest = stubHttpClient.getLastRequest();
+        String payload = EntityUtils.toString(sentRequest.getEntity());
+        JsonNode root = objectMapper.readTree(payload);
+        JsonNode contents = root.path("contents");
+
+        assertTrue(contents.isArray());
+        assertTrue(contents.size() >= 3);
+
+        // Ensure contents strictly alternate: user -> model -> user
+        String prevRole = null;
+        for (JsonNode turn : contents) {
+            String role = turn.path("role").asText();
+            if (prevRole == null) {
+                assertEquals("user", role, "First turn must be user");
+            } else {
+                assertNotEquals(prevRole, role, "Consecutive turns must alternate roles");
+            }
+            prevRole = role;
+        }
+        assertEquals("user", prevRole, "Final turn must be the current user message");
+    }
+
+    @Test
+    public void testChatAssistantFallbackWhenApiKeyMissing() {
+        geminiService.setApiKey("");
+
+        String reply = geminiService.chatAssistant("How do I report a pothole?", List.of());
+        assertNotNull(reply);
+        assertTrue(reply.contains("Report Issue") || reply.contains("NagarSeva"));
+    }
+
+    @Test
+    public void testChatAssistantFallbackOnRemoteError() {
+        geminiService.setApiKey("test-gemini-key");
+        geminiService.setHttpClient(stubHttpClient);
+        stubHttpClient.setToThrow(new IOException("Connection timed out"));
+
+        String reply = geminiService.chatAssistant("What are the wards?", List.of());
+        assertNotNull(reply);
+        // Must return graceful fallback without throwing exception
+        assertTrue(reply.contains("NagarSeva") || reply.contains("Ward"));
+    }
+
+    @Test
+    public void testVerifyGrievancePhoto_whenMismatchDetected_returnsFalse() throws Exception {
+        geminiService.setApiKey("test-gemini-key");
+        geminiService.setHttpClient(stubHttpClient);
+
+        String mockResponseBody = """
+                {
+                  "candidates": [
+                    {
+                      "content": {
+                        "parts": [
+                          {
+                            "text": "{\\"verified\\": false, \\"detectedContent\\": \\"Video game cover art\\", \\"explanation\\": \\"The image shows a video game cover and does not show road damage or potholes.\\", \\"suggestedCategory\\": null}"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        BasicClassicHttpResponse classicResponse = new BasicClassicHttpResponse(200);
+        classicResponse.setEntity(new StringEntity(mockResponseBody, ContentType.APPLICATION_JSON));
+        CloseableHttpResponse response = CloseableHttpResponse.adapt(classicResponse);
+        stubHttpClient.setResponse(response);
+
+        GeminiService.PhotoVerificationResult result = geminiService.verifyGrievancePhoto(
+                "Road Damage",
+                "large potholes on main street",
+                "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+        );
+
+        assertNotNull(result);
+        assertFalse(result.verified(), "Game cover image should be marked verified=false");
+        assertEquals("Video game cover art", result.detectedContent());
+        assertTrue(result.explanation().contains("video game cover"));
+    }
+
+    @Test
+    public void testVerifyGrievancePhoto_whenValidCivicDefect_returnsTrue() throws Exception {
+        geminiService.setApiKey("test-gemini-key");
+        geminiService.setHttpClient(stubHttpClient);
+
+        String mockResponseBody = """
+                {
+                  "candidates": [
+                    {
+                      "content": {
+                        "parts": [
+                          {
+                            "text": "{\\"verified\\": true, \\"detectedContent\\": \\"Asphalt road crater\\", \\"explanation\\": \\"Photo clearly shows road asphalt damage consistent with pothole report.\\", \\"suggestedCategory\\": null}"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        BasicClassicHttpResponse classicResponse = new BasicClassicHttpResponse(200);
+        classicResponse.setEntity(new StringEntity(mockResponseBody, ContentType.APPLICATION_JSON));
+        CloseableHttpResponse response = CloseableHttpResponse.adapt(classicResponse);
+        stubHttpClient.setResponse(response);
+
+        GeminiService.PhotoVerificationResult result = geminiService.verifyGrievancePhoto(
+                "Road Damage",
+                "large potholes on main street",
+                "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+        );
+
+        assertNotNull(result);
+        assertTrue(result.verified(), "Genuine road defect image should be marked verified=true");
+        assertEquals("Asphalt road crater", result.detectedContent());
+    }
+
+    @Test
+    public void testVerifyGrievancePhoto_lowLightStreetlightAccepted() throws Exception {
+        geminiService.setApiKey("test-gemini-key");
+        geminiService.setHttpClient(stubHttpClient);
+
+        String mockResponseBody = """
+                {
+                  "candidates": [
+                    {
+                      "content": {
+                        "parts": [
+                          {
+                            "text": "{\\"verified\\": true, \\"detectedContent\\": \\"Nighttime dark street with silhouette of unlit lamppost\\", \\"explanation\\": \\"Photo captures low-light outdoor public street with an inactive street lamp, accepted as genuine civic evidence.\\", \\"suggestedCategory\\": null}"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        BasicClassicHttpResponse classicResponse = new BasicClassicHttpResponse(200);
+        classicResponse.setEntity(new StringEntity(mockResponseBody, ContentType.APPLICATION_JSON));
+        stubHttpClient.setResponse(CloseableHttpResponse.adapt(classicResponse));
+
+        GeminiService.PhotoVerificationResult result = geminiService.verifyGrievancePhoto(
+                "Streetlight",
+                "Dark road, broken streetlight pole",
+                "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+        );
+
+        assertNotNull(result);
+        assertTrue(result.verified(), "Nighttime / low-light streetlight photo must be accepted as verified=true");
+        assertTrue(result.detectedContent().toLowerCase().contains("lamppost") || result.detectedContent().toLowerCase().contains("street"));
     }
 }

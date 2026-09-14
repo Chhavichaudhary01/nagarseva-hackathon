@@ -224,6 +224,11 @@ export default function MyComplaints() {
                               ✓ AI Verified
                             </span>
                           )}
+                          {complaint.imageVerified === false && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                              ⚠️ Photo Unverified
+                            </span>
+                          )}
                           {complaint.escalated && (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
                               ⚠️ Escalated

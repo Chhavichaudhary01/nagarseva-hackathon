@@ -82,15 +82,27 @@ npm run preview
 
 ### Pages
 
-- **Home** (`/`): Welcome page with feature overview and call-to-action buttons
-- **Report Issue** (`/report`): Form to submit new complaints with all required details
-- **Track Complaints** (`/track`): Search and view details of a specific complaint by ID
-- **Public Dashboard** (`/dashboard`): View all complaints with filtering and statistics
+- **Home** (`/`): Welcome landing page with civic metrics and CTA buttons
+- **Report Issue** (`/report`): Form to submit new complaints with GPS coordinates, category selector, 2MB photo limit, and AI grievance refinement
+- **Track Complaints** (`/track`): Public paginated grievances directory with ward and category filters
+- **My Complaints** (`/my-complaints`): Personal dashboard showing user-submitted grievances and escalation badges
+- **Safety Map** (`/safety`): Real-time interactive civic risk heatmap and safe route navigation
+- **Admin Panel** (`/admin`): Department-scoped overview KPIs, SLA escalation monitoring, and three-image resolution verification
+- **Public Dashboard** (`/dashboard`): Ward-by-ward civic statistics and charts via Recharts
 
 ### Components
 
-- **Layout**: Wrapper component providing Navbar and Footer
-- **Navbar**: Navigation bar with links to all pages
+- **AiAssistant**: Floating civic assistant powered by Google Gemini 1.5 with real-time operational status (🟢 Live / 🟡 Demo)
+- **Navbar & Footer**: Accessible navigation bar with Firebase auth state, role badges, and notifications
+- **NotificationCenter**: Notification drawer for ticket status updates and SLA alerts
+- **SafetyMap**: Leaflet mapping with marker clustering and risk heatmap overlays
+
+## Styling
+
+Styled with Tailwind CSS using an accessible Violet/Indigo theme:
+- Primary Brand Accent: `#7c5cff` / `rgb(124, 92, 255)`
+- Gradient Accents: `#6d4df5` to `#4f46e5`
+- Status Colors: Emerald (Resolved), Amber (In Progress), Rose (Escalated/High Priority)
 
 ## API Integration
 

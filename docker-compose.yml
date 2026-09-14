@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nagarseva-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nagarsevadb}
+      POSTGRES_USER: ${POSTGRES_USER:-nagarseva}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nagarseva_dev}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nagarseva} -d ${POSTGRES_DB:-nagarsevadb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nagarseva-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: nagarseva-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nagarseva-network
+
+  backend:
+    build:
+      context: ./Nagar-Seva/backend
+      dockerfile: Dockerfile
+    container_name: nagarseva-backend
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nagarseva}:${POSTGRES_PASSWORD:-nagarseva_dev}@postgres:5432/${POSTGRES_DB:-nagarsevadb}
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
+      FRONTEND_URL: http://localhost:5173,http://localhost:3000,http://frontend:5173
+      APP_RATE_LIMITING_ENABLED: "true"
+      APP_DUPLICATE_DETECTION_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - nagarseva-network
+
+  frontend:
+    build:
+      context: ./Nagar-Seva/frontend
+      dockerfile: Dockerfile.dev
+    container_name: nagarseva-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      VITE_BACKEND_URL: http://backend:8080
+      DOCKER: "true"
+    volumes:
+      - ./Nagar-Seva/frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - nagarseva-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  nagarseva-network:
+    driver: bridge

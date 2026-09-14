@@ -40,11 +40,12 @@ nagar-seva/
 
 ### 2. AI Intelligence (Google Gemini 1.5 Flash)
 - **Multimodal Vision & NLP**: Evaluates uploaded photo and description using `gemini-1.5-flash`.
+- **Interactive Civic AI Assistant**: Floating multiturn chatbot (`POST /api/ai/chat`) providing conversational civic guidance, grievance drafting, and safety navigation with dynamic live/demo status indicators.
+- **Three-Image Resolution Verification**: Concurrently audits an Area-Reference Photo (historical baseline) + Grievance Photo (reported defect) + Resolution Photo (officer fix) to verify repairs before closing tickets.
 - **Automated Department Routing**: Assigns complaints directly to the responsible municipal department (Roads, Electricity, Water & Sanitation, Waste Management, Public Health).
 - **Urgency & Priority Scoring**: Classifies priority into `HIGH`, `MEDIUM`, or `LOW` with an AI rationale.
 - **Executive Summaries**: Synthesizes concise 1–2 sentence operational summaries for field officers.
-- **Resolution Verification**: Evaluates before/after photos and resolution notes to confirm repairs before marking resolved.
-- **Graceful Fallback**: Deterministic rule-based heuristic routing if `GEMINI_API_KEY` is not provided in development.
+- **Automated `.env` Discovery & Graceful Fallback**: Automatically loads `GEMINI_API_KEY` from `.env` files on boot; falls back cleanly to deterministic heuristic routing if unconfigured or unreachable.
 
 ### 3. Municipal Admin Panel
 - **Role-Based Access Control (RBAC)**: Enforces `ROLE_ADMIN` on `/api/admin/**` endpoints.
@@ -89,6 +90,14 @@ nagar-seva/
    ```
 
 2. **Configure Environment Variables (Optional in Dev)**:
+   You can create a `.env` file in `Nagar-Seva/backend/` (or copy `.env.example`):
+   ```properties
+   GEMINI_API_KEY=your_gemini_api_key
+   GEMINI_MODEL=gemini-1.5-flash
+   ```
+   *Spring Boot will automatically discover and load properties from `.env` on startup.*
+
+   Or set variables in your terminal:
    ```bash
    # Windows (PowerShell)
    $env:GEMINI_API_KEY="your_gemini_api_key"
@@ -161,17 +170,21 @@ nagar-seva/
 | `PATCH` | `/api/complaints/{id}/status` | Authenticated | Update complaint status (`OPEN`, `IN_PROGRESS`, `RESOLVED`) |
 | `GET` | `/api/complaints/my` | Citizen / Authenticated | Fetch complaints submitted by current user |
 | `GET` | `/api/admin/complaints` | Admin (`ROLE_ADMIN`) | Paginated admin complaint queue with department filtering |
-| `POST` | `/api/admin/complaints/{id}/resolve` | Admin (`ROLE_ADMIN`) | Resolve complaint with photo proof and note (Gemini verification) |
+| `POST` | `/api/admin/complaints/{id}/resolve` | Admin (`ROLE_ADMIN`) | Resolve complaint with 3-image verification (area-ref + grievance + fix) |
 | `GET` | `/api/admin/stats` | Admin (`ROLE_ADMIN`) | Administrative operational KPIs and SLA counts |
 | `GET` | `/api/dashboard/stats` | Public | Ward rankings, category stats, resolution rates |
 | `GET` | `/api/safety/heatmap` | Public | Ward safety and grievance density metrics |
+| `POST` | `/api/ai/chat` | Public | Interactive Civic AI Assistant chatbot |
+| `GET` | `/api/ai/status` | Public | Check Gemini 1.5 operational status (`model`, `configured`, `status`) |
+| `POST` | `/api/ai/refine-grievance` | Public | AI-assisted complaint drafting & optimization |
 | `POST` | `/api/ai/verify` | Authenticated | Test Gemini multimodal verification on an image payload |
+| `GET` | `/demo-assets/**` | Public | Bundled area reference, grievance, and resolution demo images |
 
 ---
 
 ## 🧪 Testing
 
-The backend includes comprehensive MockMvc and unit tests covering controllers, rate limiting, authentication, environment validation, and AI fallback:
+The backend includes comprehensive MockMvc and unit tests (45 tests) covering controllers, rate limiting, authentication, environment validation, and AI intelligence:
 
 ```bash
 cd Nagar-Seva/backend
@@ -184,7 +197,7 @@ mvn test
 - `FirebaseAuthFilterProdTest`: Verifies that `demo-token:` bypass headers are strictly rejected in `prod` profile.
 - `SecurityAccessTest`: Validates role-based route protection across admin and citizen paths.
 - `UserServiceTest`: Validates Firebase UID auto-provisioning and synchronization.
-- `GeminiServiceTest`: Tests AI routing, heuristic fallback, and resolution checks.
+- `GeminiServiceTest`: Tests AI routing, heuristic fallback, three-image resolution verification, live Gemini 1.5 chat, multiturn history alternation, and offline status queries.
 
 ---
 
