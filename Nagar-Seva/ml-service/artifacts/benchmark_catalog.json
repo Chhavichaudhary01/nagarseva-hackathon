@@ -1,0 +1,59 @@
+{
+  "Road_Damage": {
+    "repo_name": "sekilab/RoadDamageDetector",
+    "repo_url": "https://github.com/sekilab/RoadDamageDetector",
+    "citation": "Crowd Sensing-based Road Damage Detection Challenge (CRDDC2022), Sekimoto Lab, The University of Tokyo",
+    "dataset_name": "RDD2022 (Road Damage Dataset 2022)",
+    "classes_mapped": [
+      "D00 (Longitudinal Cracks)",
+      "D10 (Transverse Cracks)",
+      "D20 (Alligator Cracks)",
+      "D40 (Potholes)"
+    ],
+    "num_annotated_images": 47420,
+    "license": "Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)"
+  },
+  "Pothole_Specific": {
+    "repo_name": "jaygala24/pothole-detection",
+    "repo_url": "https://github.com/jaygala24/pothole-detection",
+    "citation": "Gala et al., Pothole detection and dimension estimation system using deep learning and image processing, IVCNZ",
+    "dataset_name": "Pothole Dataset IVCNZ",
+    "classes_mapped": [
+      "Pothole",
+      "Asphalt Void"
+    ],
+    "num_annotated_images": 1243,
+    "license": "MIT License"
+  },
+  "Illegal_Dumping": {
+    "repo_name": "pedropro/TACO",
+    "repo_url": "https://github.com/pedropro/TACO",
+    "citation": "Proen\u00e7a & Sim\u00f5es, TACO: Trash Annotations in Context for Litter Detection, arXiv:2003.06975",
+    "dataset_name": "TACO (Trash Annotations in Context)",
+    "classes_mapped": [
+      "Plastics",
+      "Bottle",
+      "Can",
+      "Unsorted Waste",
+      "Overflow Litter"
+    ],
+    "num_annotated_images": 1500,
+    "license": "Creative Commons Attribution 4.0 International (CC BY 4.0)"
+  },
+  "Waste_Classification": {
+    "repo_name": "garythung/trashnet",
+    "repo_url": "https://github.com/garythung/trashnet",
+    "citation": "Thung & Yang, Classification of Trash for Recyclability Status, Stanford University CS229",
+    "dataset_name": "TrashNet Dataset",
+    "classes_mapped": [
+      "Plastic",
+      "Trash",
+      "Paper",
+      "Metal",
+      "Glass",
+      "Cardboard"
+    ],
+    "num_annotated_images": 2527,
+    "license": "Open Dataset"
+  }
+}
